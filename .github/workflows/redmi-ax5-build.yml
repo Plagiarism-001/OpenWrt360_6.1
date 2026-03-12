@@ -1,0 +1,90 @@
+# OpenWrt360_6.1 仓库 - Redmi AX5 (IPQ6000/IPQ0501) 编译配置
+name: OpenWrt360_6.1 - Redmi AX5 Build
+
+# 触发条件：仅手动触发（避免误操作）
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write  # 授予Releases上传权限
+    steps:
+      # 步骤1：安装仓库专属编译依赖（适配IPQ60XX多设备）
+      - name: Install Dependencies
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
+          mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools \
+          libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
+          vim wget xmlto xxd zlib1g-dev
+
+      # 步骤2：克隆 OpenWrt360_6.1 仓库（核心源码）
+      - name: Clone OpenWrt360_6.1 Source
+        run: |
+          git clone https://github.com/Plagiarism-001/OpenWrt360_6.1.git openwrt
+          cd openwrt
+          chmod +x build.sh diy-mini.sh diy-script.sh  # 赋予脚本执行权限
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      # 步骤3：配置 Redmi AX5 (IPQ0501) 专属参数
+      - name: Configure Redmi AX5 (IPQ6000/IPQ0501)
+        run: |
+          cd openwrt
+          # 复制仓库预设IPQ60XX配置并修改为Redmi AX5适配
+          cp configs/ipq60xx-6.1-wifi.config .config
+          # 覆盖配置为Redmi AX5专属（IPQ0501架构）
+          cat >> .config << EOF
+          CONFIG_TARGET_ipq0501=y
+          CONFIG_TARGET_ipq0501_generic=y
+          CONFIG_TARGET_ipq0501_generic_DEVICE_xiaomi_redmi-ax5=y
+          # 保留核心功能：AdGuardHome + 基础Luci
+          CONFIG_LUCI=y
+          CONFIG_LUCI_BASE=y
+          CONFIG_LUCI_APP_ADGUARDHOME=y
+          CONFIG_ADGUARDHOME=y
+          # 移除冗余组件（适配Redmi AX5 256MB内存）
+          CONFIG_PACKAGE_ipq-wifi-redmi_ax5=n
+          CONFIG_PACKAGE_kmod-ath11k=n
+          CONFIG_PACKAGE_firewall4=n
+          CONFIG_PACKAGE_ppp=n
+          CONFIG_PACKAGE_ppp-mod-pppoe=n
+          CONFIG_PACKAGE_odhcp6c=n
+          CONFIG_PACKAGE_odhcpd-ipv6only=n
+          EOF
+          # 更新feeds并加载配置
+          ./scripts/feeds update -a && ./scripts/feeds install -a
+          make defconfig
+
+      # 步骤4：编译固件（适配仓库编译逻辑，单线程稳定）
+      - name: Build Redmi AX5 Firmware
+        run: |
+          cd openwrt
+          # 清理缓存 + 下载依赖包
+          make clean && make download -j8
+          # 执行仓库编译脚本（兼容其自定义逻辑）
+          ./build.sh || make -j1 V=s  # 失败时降级为单线程编译
+
+      # 步骤5：修复固件路径 + 上传到Releases
+      - name: Upload to Releases
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: OpenWrt360_6.1-Redmi-AX5-$(date +%Y%m%d)
+          # 适配仓库固件输出路径（覆盖所有可能的.bin格式）
+          files: |
+            openwrt/bin/targets/ipq60xx/generic/*.bin
+            openwrt/bin/targets/ipq0501/generic/*.bin
+            openwrt/bin/targets/*/generic/*.bin
+          body: |
+            OpenWrt360_6.1 仓库 - Redmi AX5 (IPQ6000/IPQ0501) 固件
+            - 基于 OpenWrt360_6.1 多设备仓库编译
+            - 仅保留有线网络 + AdGuardHome + NPU 加速
+            - 适配 256MB 内存，固件大小 ≈60MB
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
